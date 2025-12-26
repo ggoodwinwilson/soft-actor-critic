@@ -29,47 +29,47 @@ class Agent:
 
     def learn(self, replay_buffer: ReplayBuffer, writer:SummaryWriter, global_timestep:int):
         
-        for batch in num_batches:
-        batch = replay_buffer.sample()
+        for batch in self.num_batches:
+            batch = replay_buffer.sample()
 
-        action_buf = batch["action"].to(self.device)
-        rewards_buf = batch["reward"].to(self.device)
-        obs_buf = batch["obs"].to(self.device)
-        next_obs_buf = batch["next_obs"].to(self.device)
-        dones_buf = batch["dones"].to(self.device)
+            action_buf = batch["action"].to(self.device)
+            rewards_buf = batch["reward"].to(self.device)
+            obs_buf = batch["obs"].to(self.device)
+            next_obs_buf = batch["next_obs"].to(self.device)
+            dones_buf = batch["dones"].to(self.device)
 
-        with torch.no_grad():
-            
-            q_min = min()
-            target_q = rewards_buf + self.gamma * (1 - dones_buf) * (min_q - self.alpha *  
+            with torch.no_grad():
+                
+                q_min = min()
+                target_q = rewards_buf + self.gamma * (1 - dones_buf) * (min_q - self.alpha *  
 
-        # Sample an action from the current policy for the next state
-        # a' ~ π(-|s')
-        next_action_dist, _ = self.forward(next_obs_buf)
-        next_action = next_action_dist.sample()
-        next_action_log_prob = next_action_dist.log_prob(next_action)
+            # Sample an action from the current policy for the next state
+            # a' ~ π(-|s')
+            next_action_dist, _ = self.forward(next_obs_buf)
+            next_action = next_action_dist.sample()
+            next_action_log_prob = next_action_dist.log_prob(next_action)
 
-        # Sample an action from the current policy for the current state
-        action_dist, _ = self.forward(obs_buf)
-        action = action_dist.sample()
-        action_log_prob = action_dist.log_prob(action)
+            # Sample an action from the current policy for the current state
+            action_dist, _ = self.forward(obs_buf)
+            action = action_dist.sample()
+            action_log_prob = action_dist.log_prob(action)
 
-        q1 = self.model.critic1(obs_buf)
-        q1_next = self.model.critic1(next_obs_buf, next_action)
-        q2_next = self.model.critic2(next_obs_buf, next_action)
+            q1 = self.model.critic1(obs_buf)
+            q1_next = self.model.critic1(next_obs_buf, next_action)
+            q2_next = self.model.critic2(next_obs_buf, next_action)
 
-        # L_q = E[(Q(s,a) − (r + γ(imin​Q′(s′,a′) − αlogπ(a′∣s′))))2]
-        loss_q = ((q - (r + self.gamma*(min(q1_next.detach(), q2_next.detach())) - self.alpha.detach() * next_action_log_prob))^2).mean()
+            # L_q = E[(Q(s,a) − (r + γ(imin​Q′(s′,a′) − αlogπ(a′∣s′))))2]
+            loss_q = ((q - (r + self.gamma*(min(q1_next.detach(), q2_next.detach())) - self.alpha.detach() * next_action_log_prob))^2).mean()
 
-        # L_pi = E[αlogπ(a∣s)−Q(s,a)]
-        loss_pi = (self.alpha * action_log_prob - q).mean()
+            # L_pi = E[αlogπ(a∣s)−Q(s,a)]
+            loss_pi = (self.alpha * action_log_prob - q).mean()
 
-        # L_alpha = E[−α(logπ(a∣s) + Htarget​)]
-        loss_alpha = (-self.alpha * (action_log_prob + H_target)).mean()
+            # L_alpha = E[−α(logπ(a∣s) + Htarget​)]
+            loss_alpha = (-self.alpha * (action_log_prob + H_target)).mean()
 
-        self.model.optim_zero_grad()
-        total_loss.backward()
-        self.model.optim_step()
+            self.model.optim_zero_grad()
+            total_loss.backward()
+            self.model.optim_step()
 
     def critic_target_update(self):
         with torch.no_grad():

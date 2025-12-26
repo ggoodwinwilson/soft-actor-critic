@@ -10,13 +10,14 @@ class MLPConfig:
     learning_rate: float = 3e-4
     num_epochs: int = 3
     batch_size: int = 32
+    num_batches: int = 10
     dtype: torch.dtype = torch.float32
     seq_len: int = 10 # Only used for transformers, kept for compatibility
     model_type = "mlp"
 
     def as_dict(self):
         return self.__dict__
-
+    
 
 @dataclass(frozen=True)
 class TransformerConfig:
