@@ -8,7 +8,7 @@ from configuration import PPOConfig
 import os
 
 class CheckpointManager:
-    def __init__(self, agent: Agent, rl_config: PPOConfig):
+    def __init__(self, agent: Agent, rl_config):
         self.agent = agent
         self.rl_config = rl_config
         self.model_config = agent.model_config

@@ -28,7 +28,7 @@ if __name__ == '__main__':
     paths = make_paths(agent, "flappy_bird", rl_config.rl_type)
     replay_buffer = ReplayBuffer(
         storage=LazyTensorStorage(),
-        batch_size=model_config.batch_size
+        batch_size=sac_config.batch_size
     )
     writer = SummaryWriter(paths["tensorboard_dir"])
     writer.add_text("hparams", str(make_hparams_dict(rl_config, model_config)))

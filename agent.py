@@ -2,30 +2,33 @@ from torch import nn, optim
 import torch
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
-from configuration import PPOConfig
+from configuration import SACConfig
 from transformer import Transformer
-from mlp import MLP
+from mlp import ActorNetwork, CriticNetwork
 from torchrl.data import ReplayBuffer
     
 class Agent:
-    def __init__(self, rl_config, actor_config, critic_config):
+    def __init__(self, rl_config:SACConfig, actor:ActorNetwork, critic:CriticNetwork, critic_target:CriticNetwork):
         
         # RL Hyperparmas
         self.rl_config = rl_config
-        self.rollout_len = self.rl_config.rollout_len
-        self.gamma = self.rl_config.gamma
-        self.td_lambda = self.rl_config.td_lambda
-        self.eps_clip = self.rl_config.eps_clip
-        self.ent_coef = self.rl_config.ent_coef
-        self.critic_coef = self.rl_config.critic_coef
+        self.rollout_len = rl_config.rollout_len
+        self.gamma = rl_config.gamma
+        self.td_lambda = rl_config.td_lambda
+        self.critic_coef = rl_config.critic_coef
+        self.tau = rl_config.tau
+        self.alpha_lr = rl_config.alpha_lr
 
         # Model Hyperparams
-        self.actor_config = actor_config
-        self.critic_config = critic_config
-        self.batch_size = self.model_config.batch_size
-        self.num_batches = self.model_config.num_batches
-        self.dtype = self.model_config.dtype
+        self.batch_size = rl_config.batch_size
+        self.num_batches = rl_config.num_batches
+        self.dtype = rl_config.dtype
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.actor = actor
+        self.critic = critic
+        log_alpha = torch.zeros(1, requires_grad=True, device=device)
+        opt_alpha = torch.optim.Adam([log_alpha], lr=self.lr)
 
     def learn(self, replay_buffer: ReplayBuffer, writer:SummaryWriter, global_timestep:int):
         
@@ -38,10 +41,13 @@ class Agent:
             next_obs_buf = batch["next_obs"].to(self.device)
             dones_buf = batch["dones"].to(self.device)
 
+            # ensure targets are detached for loss calculation
             with torch.no_grad():
                 
-                q_min = min()
-                target_q = rewards_buf + self.gamma * (1 - dones_buf) * (min_q - self.alpha *  
+                q_target = self.critic_target.forward(obs_buf)
+                pi = self.actor.forward(obs_buf)
+                alpha = self.alpha.forward()
+                target = rewards_buf + self.gamma * (1 - dones_buf) * (q_target - self.log_alpha.exp() 
 
             # Sample an action from the current policy for the next state
             # a' ~ π(-|s')
