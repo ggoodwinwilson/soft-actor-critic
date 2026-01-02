@@ -2,6 +2,7 @@ from torch import nn, optim
 import torch
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
+import torch.nn.functional as F
 from configuration import SACConfig
 from transformer import Transformer
 from mlp import ActorNetwork, CriticNetwork
@@ -14,12 +15,8 @@ class Agent:
         self.rl_config = rl_config
         self.rollout_len = rl_config.rollout_len
         self.gamma = rl_config.gamma
-        self.td_lambda = rl_config.td_lambda
-        self.critic_coef = rl_config.critic_coef
         self.tau = rl_config.tau
         self.alpha_lr = rl_config.alpha_lr
-
-        # Model Hyperparams
         self.batch_size = rl_config.batch_size
         self.num_batches = rl_config.num_batches
         self.dtype = rl_config.dtype
@@ -27,66 +24,74 @@ class Agent:
 
         self.actor = actor
         self.critic = critic
-        log_alpha = torch.zeros(1, requires_grad=True, device=device)
-        opt_alpha = torch.optim.Adam([log_alpha], lr=self.lr)
+        self.critic_target = critic_target
+        self.target_entropy = -actor.output_dim
+        self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
+        self.opt_alpha = optim.Adam([self.log_alpha], lr=self.alpha_lr)
 
     def learn(self, replay_buffer: ReplayBuffer, writer:SummaryWriter, global_timestep:int):
         
-        for batch in self.num_batches:
+        for _ in range(self.num_batches):
             batch = replay_buffer.sample()
 
+            # s, a, r, s', d buffers
+            state_buf = batch["state"].to(self.device)
             action_buf = batch["action"].to(self.device)
-            rewards_buf = batch["reward"].to(self.device)
-            obs_buf = batch["obs"].to(self.device)
-            next_obs_buf = batch["next_obs"].to(self.device)
+            reward_buf = batch["reward"].to(self.device)
+            next_state_buf = batch["next_state"].to(self.device)
             dones_buf = batch["dones"].to(self.device)
 
-            # ensure targets are detached for loss calculation
+            # a ~ π(-∣s), logπ(a∣s) 
+            action, action_logp = self.actor.forward(state_buf)
+
+            # Q(s, a)
+            q1, q2 = self.critic.forward(state_buf, action)
+
+            # α
+            alpha = self.log_alpha.exp()
+
+            # Don't calc gradient for these variables
             with torch.no_grad():
-                
-                q_target = self.critic_target.forward(obs_buf)
-                pi = self.actor.forward(obs_buf)
-                alpha = self.alpha.forward()
-                target = rewards_buf + self.gamma * (1 - dones_buf) * (q_target - self.log_alpha.exp() 
+                # a' ~ π(-|s'), logπ(a'|s')
+                next_action, next_action_logp = self.actor.forward(next_state_buf)
 
-            # Sample an action from the current policy for the next state
-            # a' ~ π(-|s')
-            next_action_dist, _ = self.forward(next_obs_buf)
-            next_action = next_action_dist.sample()
-            next_action_log_prob = next_action_dist.log_prob(next_action)
+                # Q'(s', a')
+                q_target1, q_target2 = self.critic_target.forward(next_state_buf, next_action)
+                q_target = torch.min(q_target1, q_target2)
 
-            # Sample an action from the current policy for the current state
-            action_dist, _ = self.forward(obs_buf)
-            action = action_dist.sample()
-            action_log_prob = action_dist.log_prob(action)
-
-            q1 = self.model.critic1(obs_buf)
-            q1_next = self.model.critic1(next_obs_buf, next_action)
-            q2_next = self.model.critic2(next_obs_buf, next_action)
+                # r + γ(imin​Q′(s′,a′) − αlogπ(a′∣s′))
+                target = reward_buf + self.gamma * (1 - dones_buf) * (q_target - alpha * next_action_logp)
 
             # L_q = E[(Q(s,a) − (r + γ(imin​Q′(s′,a′) − αlogπ(a′∣s′))))2]
-            loss_q = ((q - (r + self.gamma*(min(q1_next.detach(), q2_next.detach())) - self.alpha.detach() * next_action_log_prob))^2).mean()
+            loss_q = F.mse_loss(q1, target) + F.mse_loss(q2, target)
 
             # L_pi = E[αlogπ(a∣s)−Q(s,a)]
-            loss_pi = (self.alpha * action_log_prob - q).mean()
+            loss_pi = (alpha * action_logp - q.detach()).mean()
 
             # L_alpha = E[−α(logπ(a∣s) + Htarget​)]
-            loss_alpha = (-self.alpha * (action_log_prob + H_target)).mean()
+            loss_alpha = (-alpha * (action_logp.detach() + self.target_entropy)).mean()
 
-            self.model.optim_zero_grad()
-            total_loss.backward()
-            self.model.optim_step()
+            self.critic.optim.zero_grad()
+            loss_q.backward()
+            self.critic.optim.step()
+
+            self.actor.optim.zero_grad()
+            loss_pi.backward()
+            self.actor.optim.step()
+
+            self.opt_alpha.zero_grad()
+            loss_alpha.backward()
+            self.opt_alpha.step()
+
+            self.critic_target_update()
 
     def critic_target_update(self):
         with torch.no_grad():
-            for p, p_targ in zip(critic.parameters(),
-                                critic_target.parameters()):
-                p_targ.data.mul_(1 - tau)
-                p_targ.data.add_(tau * p.data)
-    
-    def forward(self, x):
-        return self.model.forward(x)
-        
+            for p, p_targ in zip(self.critic.parameters(),
+                                self.critic_target.parameters()):
+                p_targ.data.mul_(1 - self.tau)
+                p_targ.data.add_(self.tau * p.data)
+
     def state_dict(self):
         return {
             "model": self.model.state_dict(),
