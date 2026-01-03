@@ -51,7 +51,7 @@ def make_hparams_dict(*dicts):
 
     d = {}
     for cfg in dicts:
-        for k, v in cfg:
+        for k, v in cfg.items():
             if isinstance(v, torch.dtype):
                 v = str(v)
             d[k] = v

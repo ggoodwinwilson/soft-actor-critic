@@ -1,23 +1,24 @@
+import dataclasses
+import os
+import random
+
 import numpy as np
 import torch
-import random
+
 from agent import Agent
-import dataclasses
-from typing import Optional, Dict, Any
-from configuration import PPOConfig
-import os
 
 class CheckpointManager:
-    def __init__(self, agent: Agent, rl_config):
+    def __init__(self, agent: Agent, rl_config, actor_config=None, critic_config=None):
         self.agent = agent
         self.rl_config = rl_config
-        self.model_config = agent.model_config
+        self.actor_config = actor_config
+        self.critic_config = critic_config
 
         # training state you want to track
         self.epoch = 0
         self.training_step = 0
         self.batch_idx = 0
-        self.max_high_score = 0
+        self.max_cum_rewards = 0
         self.max_1k_rew = float("-inf")
 
     # Helpers for scalar training state
@@ -27,7 +28,7 @@ class CheckpointManager:
             "epoch",
             "training_step",
             "batch_idx",
-            "max_high_score",
+            "max_cum_rewards",
             "max_1k_rew",
         ]
 
@@ -41,34 +42,41 @@ class CheckpointManager:
 
     # RNG helpers
     def _collect_rng(self):
-        # example:
-        # return {
-        #     "python": random.getstate(),
-        #     "numpy": np.random.get_state(),
-        #     "torch": torch.get_rng_state(),
-        #     "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
-        # }
-        pass
+        return {
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "torch": torch.get_rng_state(),
+            "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+        }
 
     def _restore_rng(self, state):
-        # reverse of _collect_rng
-        pass
+        if not state:
+            return
+        random.setstate(state["python"])
+        np.random.set_state(state["numpy"])
+        torch_state = state["torch"]
+        if torch.is_tensor(torch_state):
+            torch_state = torch_state.cpu()
+        torch.set_rng_state(torch_state)
+        if torch.cuda.is_available() and state.get("torch_cuda") is not None:
+            cuda_states = []
+            for s in state["torch_cuda"]:
+                cuda_states.append(s.cpu() if torch.is_tensor(s) else s)
+            torch.cuda.set_rng_state_all(cuda_states)
 
     # ---- main API ----
     def state_dict(self):
+        config = self._current_config_snapshot()
         return {
             "agent": self.agent.state_dict(),
             "rng_state": self._collect_rng(),
             "train_state": self._get_train_state(),
-            "config": {
-                "rl_config": dataclasses.asdict(self.rl_config),
-                "model_config": dataclasses.asdict(self.model_config),
-            },
+            "config": config,
         }
 
     def load_state_dict(self, ckpt):
         self.agent.load_state_dict(ckpt["agent"])
-        self._restore_rng(ckpt["rng_state"])
+        self._restore_rng(ckpt.get("rng_state"))
         self._set_train_state(ckpt.get("train_state", {}))
         # config is optional to actually use on load
 
@@ -76,17 +84,42 @@ class CheckpointManager:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         torch.save(self.state_dict(), path)
 
+    def _current_config_snapshot(self):
+        config = {}
+        if dataclasses.is_dataclass(self.rl_config):
+            config["rl_config"] = dataclasses.asdict(self.rl_config)
+        if dataclasses.is_dataclass(self.actor_config):
+            config["actor_config"] = dataclasses.asdict(self.actor_config)
+        if dataclasses.is_dataclass(self.critic_config):
+            config["critic_config"] = dataclasses.asdict(self.critic_config)
+        return config
+
+    def _configs_compatible(self, saved_config):
+        if not saved_config:
+            return False
+        return saved_config == self._current_config_snapshot()
+
     def load(self, path: str, map_location="cpu"):
-        raw = torch.load(path, map_location=map_location)
+        raw = torch.load(path, map_location=map_location, weights_only=False)
+        if not self._configs_compatible(raw.get("config")):
+            return False
         self.load_state_dict(raw)
+        return True
 
 
 def make_run_id(agent: Agent, env_name, rl_type, tag=None):
+    model_tag = None
+    if hasattr(agent, "model_config"):
+        model_type = getattr(agent.model_config, "model_type", None)
+        d_model = getattr(agent.model_config, "d_model", None)
+        model_parts = [model_type]
+        if d_model is not None:
+            model_parts.append(f"dim{d_model}")
+        model_tag = "_".join(p for p in model_parts if p)
     parts = [
         env_name,
         rl_type,
-        agent.model_config.model_type,
-        f"dim{agent.model_config.d_model}",
+        model_tag,
         tag,
     ]
     return "_".join(p for p in parts if p)
