@@ -45,7 +45,11 @@ class Agent:
             action, action_logp = self.actor.forward(state_buf)
 
             # Q(s, a)
-            q1, q2 = self.critic.forward(state_buf, action)
+            q1, q2 = self.critic.forward(state_buf, action_buf)
+            q = torch.min(q1, q2)
+
+            q1_pi, q2_pi = self.critic.forward(state_buf, action)
+            q_pi = torch.min(q1_pi, q2_pi)
 
             # α
             alpha = self.log_alpha.exp()
@@ -66,7 +70,7 @@ class Agent:
             loss_q = F.mse_loss(q1, target) + F.mse_loss(q2, target)
 
             # L_pi = E[αlogπ(a∣s)−Q(s,a)]
-            loss_pi = (alpha * action_logp - q.detach()).mean()
+            loss_pi = (alpha.detach() * action_logp - q_pi).mean()
 
             # L_alpha = E[−α(logπ(a∣s) + Htarget​)]
             loss_alpha = (-alpha * (action_logp.detach() + self.target_entropy)).mean()
@@ -89,8 +93,8 @@ class Agent:
         with torch.no_grad():
             for p, p_targ in zip(self.critic.parameters(),
                                 self.critic_target.parameters()):
-                p_targ.data.mul_(1 - self.tau)
-                p_targ.data.add_(self.tau * p.data)
+                p_targ.copy_.mul_(1 - self.tau)
+                p_targ.copy_.add_(self.tau * p.copy_)
 
     def state_dict(self):
         return {
