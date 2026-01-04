@@ -142,7 +142,7 @@ class TransformerBlock(nn.Module):
 class Transformer(nn.Module):
     def __init__(self, config:TransformerConfig):
         super().__init__()
-        self.embeddinng = InputEmbedding(config)
+        self.embedding = InputEmbedding(config)
         self.pos_encoding = CosineEncode(config)
         self.transformer_blocks = nn.ModuleList(
             [TransformerBlock(config) for _ in range(config.num_layers)]
@@ -155,7 +155,7 @@ class Transformer(nn.Module):
         self.scaler = None
 
     def forward(self, x):
-        x = self.embeddinng(x)
+        x = self.embedding(x)
         x = self.pos_encoding(x)
 
         for block in self.transformer_blocks:

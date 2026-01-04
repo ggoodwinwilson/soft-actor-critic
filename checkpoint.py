@@ -107,7 +107,18 @@ class CheckpointManager:
         return True
 
 
-def make_run_id(agent: Agent, env_name, rl_type, tag=None):
+def _config_tag(config, prefix):
+    if not dataclasses.is_dataclass(config):
+        return None
+    model_type = getattr(config, "model_type", None)
+    d_model = getattr(config, "d_model", None)
+    parts = [prefix, model_type]
+    if d_model is not None:
+        parts.append(f"dim{d_model}")
+    return "_".join(p for p in parts if p)
+
+
+def make_run_id(agent: Agent, env_name, rl_type, tag=None, actor_config=None, critic_config=None):
     model_tag = None
     if hasattr(agent, "model_config"):
         model_type = getattr(agent.model_config, "model_type", None)
@@ -116,16 +127,20 @@ def make_run_id(agent: Agent, env_name, rl_type, tag=None):
         if d_model is not None:
             model_parts.append(f"dim{d_model}")
         model_tag = "_".join(p for p in model_parts if p)
+    actor_tag = _config_tag(actor_config, "actor")
+    critic_tag = _config_tag(critic_config, "critic")
     parts = [
         env_name,
         rl_type,
         model_tag,
+        actor_tag,
+        critic_tag,
         tag,
     ]
     return "_".join(p for p in parts if p)
 
-def make_paths(agent: Agent, env_name, rl_type, tag=None):
-    run_id = make_run_id(agent, env_name, rl_type, tag)
+def make_paths(agent: Agent, env_name, rl_type, tag=None, actor_config=None, critic_config=None):
+    run_id = make_run_id(agent, env_name, rl_type, tag, actor_config, critic_config)
 
     return {
         "run_id": run_id,
