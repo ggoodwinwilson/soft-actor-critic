@@ -111,6 +111,8 @@ View training metrics in TensorBoard:
 uv run tensorboard --logdir runs/
 ```
 
+**Note:** Checkpoints (`checkpoints/`) and TensorBoard logs (`runs/`) are gitignored and not stored in the repo.
+
 ## All options
 
 ```bash
