@@ -6,13 +6,14 @@ from collections import deque
 import os
 import argparse
 
-from configuration import sac_config, make_hparams_dict, SACConfig
+from configuration import make_hparams_dict, SACConfig
 from checkpoint import CheckpointManager, make_paths
 from torchrl.data import ReplayBuffer, LazyTensorStorage
 from tensordict import TensorDict
 from agent import Agent
 from mlp import ActorNetwork, CriticNetwork
 from configuration import ActorModelConfig, CriticModelConfig
+from env_configs import get_config
 
 class ActionScaleWrapper(gym.ActionWrapper):
     def __init__(self, env):
@@ -32,20 +33,23 @@ def parse_args():
     parser.add_argument("--render-mode", default="rgb_array")
     parser.add_argument("--eval", action="store_true", help="Run in evaluation mode (no training, human render)")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to checkpoint file (skips config validation)")
-    parser.add_argument("--eval-every", type=int, default=1000)
-    parser.add_argument("--eval-episodes", type=int, default=10)
-    parser.add_argument("--rollout-len", type=int, default=sac_config.rollout_len)
-    parser.add_argument("--batch-size", type=int, default=sac_config.batch_size)
-    parser.add_argument("--num-batches", type=int, default=sac_config.num_batches)
-    parser.add_argument("--alpha-lr", type=float, default=sac_config.alpha_lr)
-    parser.add_argument("--gamma", type=float, default=sac_config.gamma)
-    parser.add_argument("--tau", type=float, default=sac_config.tau)
-    parser.add_argument("--total-train-steps", type=int, default=sac_config.total_train_steps)
-    parser.add_argument("--warmup-steps", type=int, default=sac_config.warmup_steps)
-    parser.add_argument("--actor-d-model", type=int, default=64)
-    parser.add_argument("--critic-d-model", type=int, default=64)
-    parser.add_argument("--actor-lr", type=float, default=3e-4)
-    parser.add_argument("--critic-lr", type=float, default=3e-4)
+    # All values below default to None - actual defaults come from env_configs.py
+    # CLI args override config values when explicitly provided
+    parser.add_argument("--eval-every", type=int, default=None)
+    parser.add_argument("--eval-episodes", type=int, default=None)
+    parser.add_argument("--rollout-len", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--num-batches", type=int, default=None)
+    parser.add_argument("--alpha-lr", type=float, default=None)
+    parser.add_argument("--gamma", type=float, default=None)
+    parser.add_argument("--tau", type=float, default=None)
+    parser.add_argument("--total-train-steps", type=int, default=None)
+    parser.add_argument("--warmup-steps", type=int, default=None)
+    parser.add_argument("--actor-d-model", type=int, default=None)
+    parser.add_argument("--critic-d-model", type=int, default=None)
+    parser.add_argument("--actor-lr", type=float, default=None)
+    parser.add_argument("--critic-lr", type=float, default=None)
+    parser.add_argument("--reward-scale", type=float, default=None)
     return parser.parse_args()
 
 def run_eval(eval_env, agent, dtype, episodes):
@@ -66,34 +70,95 @@ def run_eval(eval_env, agent, dtype, episodes):
     return float(sum(returns)) / max(len(returns), 1)
 
 
+def apply_cli_overrides(config: dict, args) -> dict:
+    """Apply CLI argument overrides to config. Only overrides if CLI arg is not None."""
+    # Training overrides
+    if args.rollout_len is not None:
+        config["training"]["rollout_len"] = args.rollout_len
+    if args.batch_size is not None:
+        config["training"]["batch_size"] = args.batch_size
+    if args.num_batches is not None:
+        config["training"]["num_batches"] = args.num_batches
+    if args.total_train_steps is not None:
+        config["training"]["total_steps"] = args.total_train_steps
+    if args.warmup_steps is not None:
+        config["training"]["warmup_steps"] = args.warmup_steps
+    if args.eval_every is not None:
+        config["training"]["eval_every"] = args.eval_every
+    if args.eval_episodes is not None:
+        config["training"]["eval_episodes"] = args.eval_episodes
+
+    # SAC overrides
+    if args.gamma is not None:
+        config["sac"]["gamma"] = args.gamma
+    if args.tau is not None:
+        config["sac"]["tau"] = args.tau
+    if args.alpha_lr is not None:
+        config["sac"]["alpha_lr"] = args.alpha_lr
+
+    # Actor overrides
+    if args.actor_d_model is not None:
+        config["actor"]["d_model"] = args.actor_d_model
+    if args.actor_lr is not None:
+        config["actor"]["lr"] = args.actor_lr
+
+    # Critic overrides
+    if args.critic_d_model is not None:
+        config["critic"]["d_model"] = args.critic_d_model
+    if args.critic_lr is not None:
+        config["critic"]["lr"] = args.critic_lr
+
+    # Reward scale override
+    if args.reward_scale is not None:
+        config["reward_scale"] = args.reward_scale
+
+    return config
+
+
 if __name__ == '__main__':
     args = parse_args()
     eval_mode = args.eval
 
+    # Load environment config and apply CLI overrides
+    config = get_config(args.env_id)
+    config = apply_cli_overrides(config, args)
+
     # In eval mode, force human rendering
     render_mode = "human" if eval_mode else args.render_mode
 
-    env = ActionScaleWrapper(gym.make(args.env_id, render_mode=render_mode, g=9.81))
+    # Create environment with env-specific kwargs
+    env = ActionScaleWrapper(gym.make(args.env_id, render_mode=render_mode, **config["env_kwargs"]))
     obs_dim = int(env.observation_space.shape[0])
     act_dim = int(env.action_space.shape[0])
+
+    # Build configs from env_configs
     rl_config = SACConfig(
-        rollout_len=args.rollout_len,
-        batch_size=args.batch_size,
-        num_batches=args.num_batches,
-        alpha_lr=args.alpha_lr,
-        gamma=args.gamma,
-        total_train_steps=args.total_train_steps,
-        tau=args.tau,
-        warmup_steps=args.warmup_steps,
+        rl_type="sac",
+        rollout_len=config["training"]["rollout_len"],
+        batch_size=config["training"]["batch_size"],
+        num_batches=config["training"]["num_batches"],
+        alpha_lr=config["sac"]["alpha_lr"],
+        gamma=config["sac"]["gamma"],
+        total_train_steps=config["training"]["total_steps"],
+        tau=config["sac"]["tau"],
+        warmup_steps=config["training"]["warmup_steps"],
     )
-    actor_config = ActorModelConfig(d_in=obs_dim, d_model=args.actor_d_model, d_out=act_dim, learning_rate=args.actor_lr)
+    actor_config = ActorModelConfig(
+        model_type="mlp",
+        d_in=obs_dim,
+        d_model=config["actor"]["d_model"],
+        d_out=act_dim,
+        learning_rate=config["actor"]["lr"],
+    )
     critic_config = CriticModelConfig(
+        model_type="mlp",
         action_dim=act_dim,
         state_dim=obs_dim,
-        d_model=args.critic_d_model,
+        d_model=config["critic"]["d_model"],
         d_out=1,
-        learning_rate=args.critic_lr,
+        learning_rate=config["critic"]["lr"],
     )
+    reward_scale = config["reward_scale"]
 
     # Model is defined in the Agent class
     actor = ActorNetwork(actor_config)
@@ -150,11 +215,13 @@ if __name__ == '__main__':
             env.close()
     else:
         # Training mode
-        raw_eval_env = gym.make(args.env_id, g=9.81)
+        raw_eval_env = gym.make(args.env_id, **config["env_kwargs"])
         max_steps = getattr(raw_eval_env.spec, "max_episode_steps", None) or 200
         if not isinstance(raw_eval_env, TimeLimit):
             raw_eval_env = TimeLimit(raw_eval_env, max_episode_steps=max_steps)
         eval_env = ActionScaleWrapper(raw_eval_env)
+        eval_every = config["training"]["eval_every"]
+        eval_episodes = config["training"]["eval_episodes"]
 
         replay_buffer = ReplayBuffer(
             storage=LazyTensorStorage(int(1e6), compilable=True),
@@ -196,7 +263,7 @@ if __name__ == '__main__':
                 state_t1, reward, terminated, truncated, info = env.step(action_t)
                 needs_reset = terminated or truncated
                 done_t = float(terminated)
-                reward_t = reward * 0.01
+                reward_t = reward * reward_scale
                 episode_return += reward_t
                 episode_len += 1
 
@@ -243,8 +310,8 @@ if __name__ == '__main__':
                 writer.add_scalar("Train/last_1k_reward_sum", last_1k_rew, global_step=ckpt.training_step)
                 writer.add_scalar("Train/max_episode_return", ckpt.max_cum_rewards, global_step=ckpt.training_step)
                 writer.add_scalar("Train/buffer_size", len(replay_buffer), global_step=ckpt.training_step)
-                if args.eval_every and ckpt.training_step % args.eval_every == 0:
-                    avg_return = run_eval(eval_env, agent, rl_config.dtype, args.eval_episodes)
+                if eval_every and ckpt.training_step % eval_every == 0:
+                    avg_return = run_eval(eval_env, agent, rl_config.dtype, eval_episodes)
                     writer.add_scalar("Eval/avg_return", avg_return, global_step=ckpt.training_step)
                 print(
                     f"Reward: {reward_t:.2f},\t Done: {done_t},\t"

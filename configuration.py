@@ -1,59 +1,61 @@
-from dataclasses import dataclass
+"""
+Dataclass definitions for configs.
+Default VALUES live in env_configs.py - these are just the structure/schema.
+"""
+from dataclasses import dataclass, asdict
 import torch
 
 
 @dataclass(frozen=True)
 class ActorModelConfig:
-    model_type: str = "mlp"
-    d_in: int = 180
-    d_model: int = 256
-    d_out: int = 10
-    learning_rate: float = 3e-4
+    model_type: str
+    d_in: int
+    d_model: int
+    d_out: int
+    learning_rate: float
     dtype: torch.dtype = torch.float32
 
     def as_dict(self):
-        return self.__dict__
-    
+        return {k: str(v) if isinstance(v, torch.dtype) else v for k, v in asdict(self).items()}
+
+
 @dataclass(frozen=True)
 class CriticModelConfig:
-    model_type: str = "mlp"
-    action_dim: int = 180
-    state_dim: int = 180
-    d_model: int = 256
-    d_out: int = 10
-    learning_rate: float = 3e-4
+    model_type: str
+    action_dim: int
+    state_dim: int
+    d_model: int
+    d_out: int
+    learning_rate: float
     dtype: torch.dtype = torch.float32
 
     def as_dict(self):
-        return self.__dict__
-    
-    
+        return {k: str(v) if isinstance(v, torch.dtype) else v for k, v in asdict(self).items()}
+
+
 @dataclass(frozen=True)
 class SACConfig:
-    rl_type: str = 'sac'
-    rollout_len: int = 128
-    batch_size: int = 256
-    num_batches: int = 128
-    alpha_lr: float = 3e-4
-    gamma: float = 0.99
-    total_train_steps: int = 100_000
+    rl_type: str
+    rollout_len: int
+    batch_size: int
+    num_batches: int
+    alpha_lr: float
+    gamma: float
+    total_train_steps: int
+    tau: float
+    warmup_steps: int
     dtype: torch.dtype = torch.float32
-    tau: float = 0.005
-    warmup_steps: int = 5_000
-    
 
     def as_dict(self):
-        return self.__dict__
-    
-sac_config = SACConfig()
+        return {k: str(v) if isinstance(v, torch.dtype) else v for k, v in asdict(self).items()}
+
 
 def make_hparams_dict(*dicts):
-
-    d = {}
+    """Flatten multiple config dicts into one for logging."""
+    result = {}
     for cfg in dicts:
         for k, v in cfg.items():
             if isinstance(v, torch.dtype):
                 v = str(v)
-            d[k] = v
-
-    return d
+            result[k] = v
+    return result
